@@ -13,7 +13,7 @@ from struct import pack
 from threading import Barrier
 from unittest.mock import patch
 
-from tzx_commander.listing import basic_listing, code_listing
+from tzx_commander.listing import NUMBER_STYLE, basic_listing, code_listing
 from tzx_commander.screen import BITMAP_SIZE, SCREEN_SIZE, launch_viewer, screen_memory
 from tzx_commander.tape import (
     TZX_MAGIC,
@@ -342,6 +342,61 @@ class TapeTests(unittest.TestCase):
                     basic_listing(header, payload.body()),
                     ['  10 PRINT "HELLO"', "", "Uložené proměnné", "a = 42"],
                 )
+
+    def test_basic_listing_styles_stored_integer_and_float_after_text(self):
+        line = b"\xF542\x0E\x81\x40\x00\x00\x00,7\x0E" + basic_integer(7) + b"\x0D"
+        program = pack(">H", 10) + pack("<H", len(line)) + line
+        header = b"\x00BASIC     " + pack("<HHH", len(program), 32768, len(program))
+        path = self.directory / "numbers.tap"
+        path.write_bytes(fragment(0, header) + fragment(255, program))
+        tape = Tape.open(path)
+        header, payload = program_taps(tape.blocks, 1)
+
+        self.assertEqual(
+            basic_listing(header, payload.body()),
+            [
+                [
+                    ("", "  10 PRINT 42"),
+                    (NUMBER_STYLE, " [81 40 00 00 00 → 1.5]"),
+                    ("", ",7"),
+                    (NUMBER_STYLE, " [00 00 07 00 00 → 7]"),
+                ],
+                "", "Uložené proměnné", "Žádné uložené proměnné.",
+            ],
+        )
+
+    def test_basic_listing_does_not_label_bytes_in_strings_remarks_or_formal_parameters(self):
+        bodies = [
+            b'\xF5"9\x0eABCDE":\xea8\x0eFGHIJ\x0D',
+            b"\xce f(x\x0e\x00\x00\x00\x00\x00)=x\x0D",
+        ]
+        program = b"".join(pack(">H", number) + pack("<H", len(line)) + line
+                           for number, line in enumerate(bodies, 10))
+        header = b"\x00BASIC     " + pack("<HHH", len(program), 32768, len(program))
+        path = self.directory / "literals.tap"
+        path.write_bytes(fragment(0, header) + fragment(255, program))
+        tape = Tape.open(path)
+        header, payload = program_taps(tape.blocks, 0)
+
+        lines = basic_listing(header, payload.body())
+        self.assertIn("ABCDE", lines[0])
+        self.assertIn("FGHIJ", lines[0])
+        self.assertEqual(lines[1], "  11 DEF FN  f(x)=x")
+
+    def test_truncated_basic_number_does_not_consume_the_next_line(self):
+        first = b"\xF51\x0E\x81\x40\x0D"
+        second = b'\xF5"OK"\x0D'
+        program = pack(">H", 10) + pack("<H", len(first)) + first
+        program += pack(">H", 20) + pack("<H", len(second)) + second
+        header = b"\x00BASIC     " + pack("<HHH", len(program), 32768, len(program))
+        path = self.directory / "truncated-number.tap"
+        path.write_bytes(fragment(0, header) + fragment(255, program))
+        tape = Tape.open(path)
+        header, payload = program_taps(tape.blocks, 0)
+
+        listing = basic_listing(header, payload.body())
+        self.assertIn((NUMBER_STYLE, " [81 40 → neúplný zápis čísla]"), listing[0])
+        self.assertEqual(listing[1], '  20 PRINT "OK"')
 
     def test_basic_listing_shows_variables_without_program_lines(self):
         path = self.directory / "variables.tap"

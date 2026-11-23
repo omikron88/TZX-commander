@@ -8,13 +8,14 @@ import os
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Awaitable, Callable, Literal, Mapping
+from typing import Awaitable, Callable, Literal, Mapping, Sequence
 
 from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import StyleAndTextTuples
+from prompt_toolkit.formatted_text.utils import fragment_list_width
 from prompt_toolkit.input import Input
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.keys import Keys
@@ -27,7 +28,7 @@ from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
 from tzxlib.tapfile import TapHeader
 
-from .listing import basic_listing, code_listing
+from .listing import ListingLine, basic_listing, code_listing
 from .screen import launch_viewer, screen_memory
 from .tape import (
     FORMATS,
@@ -163,7 +164,7 @@ class Panel:
             self.top = self.cursor - visible + 1
 
 
-def fit(value: str, width: int) -> str:
+def fit(value: str, width: int, *, pad: bool = True) -> str:
     parts = []
     for character in value:
         if not character.isprintable():
@@ -173,7 +174,31 @@ def fit(value: str, width: int) -> str:
             break
         parts.append(character)
         width -= columns
-    return "".join(parts) + " " * width
+    return "".join(parts) + (" " * width if pad else "")
+
+
+def fit_viewer_line(line: ListingLine, left: int, width: int) -> StyleAndTextTuples:
+    if isinstance(line, str):
+        return [("", " " + fit(line[left:], width))]
+
+    result: StyleAndTextTuples = [("", " ")]
+    for style, text, *_ in line:
+        if left >= len(text):
+            left -= len(text)
+            continue
+        remaining = text[left:]
+        visible = fit(remaining, width, pad=False)
+        if visible:
+            result.append((style, visible))
+        width -= get_cwidth(visible)
+        if width <= 0 or len(visible) < len(remaining):
+            break
+        left = 0
+    return result
+
+
+def viewer_line_width(line: ListingLine) -> int:
+    return get_cwidth(line) if isinstance(line, str) else fragment_list_width(line)
 
 
 def scroll_delta(key: Keys | str, page: int, count: int) -> int:
@@ -187,7 +212,7 @@ def scroll_delta(key: Keys | str, page: int, count: int) -> int:
 class Dialog:
     mode: Literal["viewer", "path", "confirm", "create"]
     title: str
-    lines: list[str]
+    lines: Sequence[ListingLine]
     footer: str
     answer: asyncio.Future[str | None]
     top: int = 0
@@ -243,6 +268,7 @@ class Commander:
                 "header": "ansiblue bg:ansicyan bold",
                 "selection": "ansiblue bg:ansicyan",
                 "mark": "ansiyellow bg:ansiblue bold",
+                "basic-number": "ansibrightcyan bg:ansiblue bold",
             }),
             input=input, output=output,
         )
@@ -302,7 +328,7 @@ class Commander:
             page = max(0, height - 3)
             dialog.top = min(dialog.top, max(0, len(dialog.lines) - page))
             lines: list[StyleAndTextTuples] = [[("class:header", fit(" " + dialog.title, width))]]
-            lines.extend([("", " " + fit(line[dialog.left:], width - 2))]
+            lines.extend(fit_viewer_line(line, dialog.left, width - 2)
                          for line in dialog.lines[dialog.top:dialog.top + page])
             if height > 1:
                 lines.extend([] for _ in range(height - len(lines) - 1))
@@ -335,7 +361,7 @@ class Commander:
 
     async def modal(
         self, mode: Literal["viewer", "path", "confirm", "create"], title: str,
-        lines: list[str], footer: str, entry: str = "", *, viewer_keys: tuple[str, ...] = (),
+        lines: Sequence[ListingLine], footer: str, entry: str = "", *, viewer_keys: tuple[str, ...] = (),
     ) -> str | None:
         answer = asyncio.get_running_loop().create_future()
         self.dialog = Dialog(mode, title, lines, footer, answer, viewer_keys=viewer_keys)
@@ -357,7 +383,7 @@ class Commander:
         return True
 
     async def viewer(
-        self, title: str, lines: list[str], *, actions: Mapping[str, ViewerAction] | None = None
+        self, title: str, lines: Sequence[ListingLine], *, actions: Mapping[str, ViewerAction] | None = None
     ) -> None:
         actions = actions or {}
         footer = " Esc zpět  ·  ↑↓←→ PgUp/PgDn Home/End"
@@ -646,7 +672,7 @@ class Commander:
                 dialog.answer.set_result(key.lower())
             elif key in (Keys.Left, Keys.Right):
                 width = self.app.output.get_size().columns - 2
-                longest = max(map(get_cwidth, dialog.lines), default=0)
+                longest = max(map(viewer_line_width, dialog.lines), default=0)
                 shift = 8 if key == Keys.Right else -8
                 dialog.left = max(0, min(dialog.left + shift, longest - width))
             else:

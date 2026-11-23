@@ -76,6 +76,11 @@ s čísly řádků. Pod programem vypíše uložené číselné a řetězcové p
 obsah polí a stav smyček `FOR…NEXT`. Disassembler uvádí hexadecimální adresu,
 bajty a instrukci Z80. Počáteční adresu bere z hlavičky `CODE` (`Bytes`).
 
+Za textem číselné konstanty se ve výpisu BASICu jinou barvou zobrazí pět
+uložených bajtů v hexadecimálním tvaru a jejich dekódovaná hodnota, například
+`42 [81 40 00 00 00 → 1.5]`. První číslo je text programu a poznámka ukazuje
+hodnotu uloženou za značkou `0E`.
+
 Dlouhé řádky lze posouvat šipkami doleva a doprava. Klávesa `Esc` se vrátí
 na předchozí obrazovku správce.
 

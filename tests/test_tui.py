@@ -7,14 +7,23 @@ from pathlib import Path
 from struct import pack
 from unittest.mock import patch
 
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
+from tzx_commander.listing import NUMBER_STYLE
 from tzx_commander.screen import SCREEN_SIZE
-from tzx_commander.tui import Commander, Panel
+from tzx_commander.tui import Commander, Panel, fit_viewer_line, viewer_line_width
 
 
 class CommanderTests(unittest.IsolatedAsyncioTestCase):
+    def test_horizontal_scroll_preserves_annotation_style(self):
+        line = FormattedText([("", "42"), (NUMBER_STYLE, " [81]"), ("", ",7")])
+        self.assertEqual(viewer_line_width(line), 9)
+        self.assertEqual(fit_viewer_line(line, 3, 5), [
+            ("", " "), (NUMBER_STYLE, "[81]"), ("", ","),
+        ])
+
     async def test_panel_keys_editable_path_and_screen_preview(self):
         with tempfile.TemporaryDirectory() as directory, create_pipe_input() as input_pipe:
             root = Path(directory).resolve()

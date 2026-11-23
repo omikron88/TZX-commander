@@ -30,8 +30,9 @@ def _word(stream: BytesIO) -> int:
     return int.from_bytes(_read(stream, 2), "little")
 
 
-def _number(stream: BytesIO) -> str:
-    data = _read(stream, 5)
+def format_number(data: bytes) -> str:
+    if len(data) != 5:
+        raise ValueError("neúplný zápis čísla")
     exponent, sign_byte = data[:2]
     if exponent == 0:
         if sign_byte not in (0, 0xFF) or data[4] != 0:
@@ -43,6 +44,10 @@ def _number(stream: BytesIO) -> str:
     mantissa = int.from_bytes(data[1:], "big") | 0x80000000
     number = ldexp(mantissa, exponent - 128 - 32)
     return format(-number if sign_byte & 0x80 else number, ".10g")
+
+
+def _number(stream: BytesIO) -> str:
+    return format_number(_read(stream, 5))
 
 
 def _string(data: bytes) -> str:
