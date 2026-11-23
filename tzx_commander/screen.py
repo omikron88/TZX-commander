@@ -10,43 +10,23 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Sequence
 
-from tzxlib.tapfile import TapFile, TapHeader
 from tzxlib.tzxblocks import TzxbBlock
 
-from .tape import TAP_METADATA, TapeError, matches_program_data
+from .tape import TapeError, matches_program_data, program_taps
 
 SCREEN_ADDRESS = 0x4000
 BITMAP_SIZE = 6144
 SCREEN_SIZE = BITMAP_SIZE + 768
 
 
-def nearby_tap(blocks: Sequence[TzxbBlock], index: int, direction: int) -> TapFile | None:
-    """Look past annotations and pauses that keep playback going."""
-    stop = len(blocks) if direction > 0 else -1
-    for position in range(index + direction, stop, direction):
-        block = blocks[position]
-        if block.id in TAP_METADATA or (block.id == 0x20 and block.length() > 0):
-            continue
-        return getattr(block, "tap", None)
-    return None
-
-
 def screen_memory(blocks: Sequence[TzxbBlock], index: int) -> bytes | None:
     """Return an SCR image from an addressed load or a screen-sized payload."""
-    tap = getattr(blocks[index], "tap", None)
-    if tap is None:
+    header, data = program_taps(blocks, index)
+    if data is None:
         return None
-
-    if isinstance(tap, TapHeader):
-        header, data = tap, nearby_tap(blocks, index, 1)
-    else:
-        header, data = nearby_tap(blocks, index, -1), tap
-        if not isinstance(header, TapHeader):
-            return data.body() if len(data.data) == SCREEN_SIZE + 2 else None
-
-    if not isinstance(header, TapHeader) or header.typeId() != 3:
-        return None
-    if data is None or not matches_program_data(header, data):
+    if header is None:
+        return data.body() if len(data.data) == SCREEN_SIZE + 2 else None
+    if header.typeId() != 3 or not matches_program_data(header, data):
         return None
 
     offset = header.param1() - SCREEN_ADDRESS

@@ -13,6 +13,7 @@ from struct import pack
 from threading import Barrier
 from unittest.mock import patch
 
+from tzx_commander.listing import basic_listing, code_listing
 from tzx_commander.screen import BITMAP_SIZE, SCREEN_SIZE, launch_viewer, screen_memory
 from tzx_commander.tape import (
     TZX_MAGIC,
@@ -20,6 +21,7 @@ from tzx_commander.tape import (
     TapeError,
     block_text,
     program_indices,
+    program_taps,
     save_image,
     tap_losses,
     transfer_image,
@@ -269,6 +271,57 @@ class TapeTests(unittest.TestCase):
         self.assertIsNone(screen_memory(tape.blocks, 1))
         path.write_bytes(first + b"\x23\x01\x00" + last)
         self.assertIsNone(screen_memory(Tape.open(path).blocks, 0))
+
+    def test_basic_listing_stops_before_saved_variables(self):
+        line = b'\xF5"HELLO"\x0D'
+        program = pack(">H", 10) + pack("<H", len(line)) + line
+        variables = pack(">H", 42) + pack("<H", len(line)) + line
+        data = program + variables
+        header = b"\x00BASIC     " + pack("<HHH", len(data), 32768, len(program))
+        path = self.directory / "basic.tap"
+        path.write_bytes(fragment(0, header) + fragment(255, data))
+        tape = Tape.open(path)
+        for index in range(2):
+            with self.subTest(index=index):
+                header, payload = program_taps(tape.blocks, index)
+                self.assertEqual(basic_listing(header, payload.body()), ['  10 PRINT "HELLO"'])
+
+    def test_basic_listing_rejects_a_variables_offset_past_the_data(self):
+        path = self.directory / "invalid-basic.tap"
+        header = b"\x00BASIC     " + pack("<HHH", 1, 32768, 2)
+        path.write_bytes(fragment(0, header) + fragment(255, b"\x00"))
+        tape = Tape.open(path)
+        header, payload = program_taps(tape.blocks, 0)
+        with self.assertRaises(TapeError):
+            basic_listing(header, payload.body())
+
+    def test_code_listing_uses_the_header_address_in_tzx(self):
+        path = self.directory / "code.tzx"
+        data = bytes.fromhex("3E 2A 18 FE C9")
+        standard = b"\x10\xe8\x03"
+        path.write_bytes(TZX_MAGIC + b"\x01\x14" + standard + code_header(0x8000, len(data))
+                         + b"\x30\x03Z80" + standard + fragment(255, data))
+        tape = Tape.open(path)
+        for index in (0, 2):
+            with self.subTest(index=index):
+                header, payload = program_taps(tape.blocks, index)
+                listing = code_listing(header, payload.body())
+                self.assertEqual([line[:4] for line in listing], ["8000", "8002", "8004"])
+                self.assertTrue(listing[0].endswith("ld a,42"))
+                self.assertTrue(listing[1].endswith("jr $8002"))
+                self.assertTrue(listing[2].endswith("ret"))
+
+    def test_code_listing_wraps_addresses_and_displays_a_truncated_instruction(self):
+        path = self.directory / "wrapped.tap"
+        data = bytes.fromhex("18 00 18 FC 3E")
+        path.write_bytes(code_header(0xFFFE, len(data)) + fragment(255, data))
+        tape = Tape.open(path)
+        header, payload = program_taps(tape.blocks, 1)
+        listing = code_listing(header, payload.body())
+        self.assertEqual([line[:4] for line in listing], ["FFFE", "0000", "0002"])
+        self.assertTrue(listing[0].endswith("jr $0000"))
+        self.assertTrue(listing[1].endswith("jr $FFFE"))
+        self.assertTrue(listing[2].endswith("db $3E"))
 
     def test_viewer_receives_a_temporary_scr_file(self):
         contents = bytes(SCREEN_SIZE)

@@ -52,7 +52,7 @@ class CommanderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(panels[1].location, tape_path)
                 with patch.object(commander, "show_screen") as show_screen:
                     await send("\x1bOR", lambda: commander.dialog is not None)  # F3
-                    self.assertTrue(commander.dialog.screen_available)
+                    self.assertIn("v", commander.dialog.viewer_keys)
                     await send("v", lambda: show_screen.await_count == 1 and commander.dialog is not None)
                     show_screen.assert_awaited_once_with(screen)
                     await send("\x1b", lambda: commander.dialog is None)
