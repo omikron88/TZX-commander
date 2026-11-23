@@ -27,6 +27,7 @@ from tzx_commander.tape import (
     transfer_image,
     write_file,
 )
+from tzx_commander.variables import variable_listing
 
 
 def fragment(flag, body):
@@ -38,6 +39,59 @@ def fragment(flag, body):
 
 def code_header(address, length, type_id=3):
     return fragment(0, bytes([type_id]) + b"SCREEN    " + pack("<HHH", length, address, 0))
+
+
+def basic_integer(value):
+    return bytes([0, 255 if value < 0 else 0]) + pack("<H", value & 0xFFFF) + b"\x00"
+
+
+def basic_array(tag, dimensions, values):
+    record = bytes([len(dimensions)]) + b"".join(pack("<H", size) for size in dimensions) + values
+    return bytes([tag]) + pack("<H", len(record)) + record
+
+
+class BasicVariableTests(unittest.TestCase):
+    def test_numbers_and_string_values(self):
+        data = b"\x61" + basic_integer(65535)
+        data += b"\xB4otal\xB9" + basic_integer(-42)
+        data += b"\x62\x81\x40\x00\x00\x00"  # 1.5
+        data += b"\x63\x82\xA0\x00\x00\x00"  # -2.5
+        data += b'\x41\x05\x00A\x7f\x00"\\'
+        self.assertEqual(
+            variable_listing(data),
+            ["a = 65535", "total9 = -42", "b = 1.5", "c = -2.5", r'a$ = "A©\x00\"\\"'],
+        )
+
+    def test_array_indices_dimensions_and_string_rows(self):
+        numbers = b"".join(map(basic_integer, (1, 2, 3, -4)))
+        data = basic_array(0x81, (2, 2), numbers)
+        data += basic_array(0xD3, (2, 3), b'X"Y A ')
+        data += basic_array(0xD1, (2,), b"OK")
+        self.assertEqual(
+            variable_listing(data),
+            [
+                "DIM a(2,2)", "  a(1,1) = 1", "  a(1,2) = 2", "  a(2,1) = 3", "  a(2,2) = -4",
+                "DIM s$(2,3)", r'  s$(1) = "X\"Y"', '  s$(2) = " A "',
+                "DIM q$(2)", '  q$ = "OK"',
+            ],
+        )
+
+    def test_for_counter_shows_value_limit_step_and_return_location(self):
+        data = b"\xE9" + b"".join(map(basic_integer, (2, 5, -1))) + pack("<HB", 550, 3)
+        self.assertEqual(variable_listing(data), ["i = 2  (FOR, mez 5, krok -1, řádek 550, příkaz 3)"])
+
+    def test_empty_variable_area_and_optional_end_marker(self):
+        self.assertEqual(variable_listing(b""), ["Žádné uložené proměnné."])
+        self.assertEqual(variable_listing(b"\x80"), ["Žádné uložené proměnné."])
+        self.assertEqual(variable_listing(b"\x61" + basic_integer(0) + b"\x80"), ["a = 0"])
+
+    def test_corrupt_array_preserves_preceding_variables(self):
+        data = b"\x61" + basic_integer(7) + basic_array(0x82, (200, 200), basic_integer(8))
+        listing = variable_listing(data)
+        self.assertEqual(listing[0], "a = 7")
+        self.assertEqual(len(listing), 2)
+        self.assertIn("pozici $0006", listing[1])
+        self.assertIn("rozměry pole neodpovídají délce dat", listing[1])
 
 
 class TapeTests(unittest.TestCase):
@@ -272,10 +326,10 @@ class TapeTests(unittest.TestCase):
         path.write_bytes(first + b"\x23\x01\x00" + last)
         self.assertIsNone(screen_memory(Tape.open(path).blocks, 0))
 
-    def test_basic_listing_stops_before_saved_variables(self):
+    def test_basic_listing_shows_program_and_saved_variables(self):
         line = b'\xF5"HELLO"\x0D'
         program = pack(">H", 10) + pack("<H", len(line)) + line
-        variables = pack(">H", 42) + pack("<H", len(line)) + line
+        variables = b"\x61" + basic_integer(42)
         data = program + variables
         header = b"\x00BASIC     " + pack("<HHH", len(data), 32768, len(program))
         path = self.directory / "basic.tap"
@@ -284,7 +338,22 @@ class TapeTests(unittest.TestCase):
         for index in range(2):
             with self.subTest(index=index):
                 header, payload = program_taps(tape.blocks, index)
-                self.assertEqual(basic_listing(header, payload.body()), ['  10 PRINT "HELLO"'])
+                self.assertEqual(
+                    basic_listing(header, payload.body()),
+                    ['  10 PRINT "HELLO"', "", "Uložené proměnné", "a = 42"],
+                )
+
+    def test_basic_listing_shows_variables_without_program_lines(self):
+        path = self.directory / "variables.tap"
+        variables = b"\x61" + basic_integer(42)
+        header = b"\x00BASIC     " + pack("<HHH", len(variables), 32768, 0)
+        path.write_bytes(fragment(0, header) + fragment(255, variables))
+        tape = Tape.open(path)
+        header, payload = program_taps(tape.blocks, 0)
+        self.assertEqual(
+            basic_listing(header, payload.body()),
+            ["Program neobsahuje žádné řádky.", "", "Uložené proměnné", "a = 42"],
+        )
 
     def test_basic_listing_rejects_a_variables_offset_past_the_data(self):
         path = self.directory / "invalid-basic.tap"
