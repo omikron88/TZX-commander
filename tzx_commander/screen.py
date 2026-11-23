@@ -32,7 +32,7 @@ def nearby_tap(blocks: Sequence[TzxbBlock], index: int, direction: int) -> TapFi
 
 
 def screen_memory(blocks: Sequence[TzxbBlock], index: int) -> bytes | None:
-    """Return a complete SCR image for a visible load or a headerless screen."""
+    """Return an SCR image from an addressed load or a screen-sized payload."""
     tap = getattr(blocks[index], "tap", None)
     if tap is None:
         return None
@@ -53,7 +53,7 @@ def screen_memory(blocks: Sequence[TzxbBlock], index: int) -> bytes | None:
     first = max(0, offset)
     last = min(SCREEN_SIZE, offset + header.length())
     if first >= last:
-        return None
+        return data.body() if header.length() == SCREEN_SIZE else None
 
     image = bytearray(BITMAP_SIZE) + bytearray(b"\x38" * (SCREEN_SIZE - BITMAP_SIZE))
     image[first:last] = data.body()[first - offset:last - offset]

@@ -69,11 +69,12 @@ kopírování a mazání bloků týká aktuálního řádku.
 ## Náhled obrazovky ZX Spectrum
 
 V otevřeném obrazu kazety vyberte blok a stiskněte `V`. Stejná klávesa funguje
-v detailu bloku (`F3`). Náhled je dostupný na hlavičce `CODE` i na jejím
-odpovídajícím datovém bloku, pokud zápis zasahuje do obrazové paměti
+v detailu bloku (`F3`). Náhled je dostupný na hlavičce `CODE` (`Bytes`)
+i na odpovídajícím datovém bloku, pokud zápis zasahuje do obrazové paměti
 `0x4000–0x5AFF`. U částečného zápisu se data vykreslí na své adrese
-v prázdné obrazovce. Náhled funguje také pro bezhlavičkový blok s přesně
-6912 bajty dat.
+v prázdné obrazovce. U bloku `CODE` mimo obrazovou paměť (například na
+adrese `0x8000`) nebo u bezhlavičkového bloku se přesně 6912 bajtů dat
+zobrazí jako celá obrazovka.
 
 Okno otevírá prohlížeč z adresáře `tools/`, který vyžaduje grafické prostředí
 a Tkinter. Dostupnost Tkinteru lze ověřit příkazem `python -m tkinter`.
