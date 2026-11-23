@@ -6,10 +6,21 @@ kazetových bloků správce používá knihovnu z balíku [tzxtools](https://git
 
 ## Instalace
 
-Vyžaduje Python 3.10 nebo novější a terminál. Následující příklad je pro Linux
-nebo macOS. Instalace ve Windows přidá balík `windows-curses` automaticky.
-Ve Windows aktivujte virtuální prostředí příkazem `.venv\Scripts\Activate.ps1`
-v PowerShellu.
+Vyžaduje Python 3.10 nebo novější a interaktivní terminál.
+
+### Windows (PowerShell)
+
+```powershell
+git clone https://github.com/omikron88/TZX-commander.git
+cd TZX-commander
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install .
+.\.venv\Scripts\tzx-commander.exe
+```
+
+Pokud už máte klon, aktualizujte ho příkazem `git pull` před spuštěním instalace.
+
+### Linux a macOS
 
 ```sh
 git clone https://github.com/omikron88/TZX-commander.git
