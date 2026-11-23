@@ -19,8 +19,6 @@ def main() -> int:
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         parser.exit(1, "TZX Commander vyžaduje interaktivní terminál.\n")
 
-    import curses
-
     from .tape import TapeError
     from .tui import Commander, Panel
 
@@ -28,12 +26,11 @@ def main() -> int:
     try:
         for panel in panels:
             panel.load(panel.location)
-        curses.wrapper(lambda screen: Commander(screen, panels).run())
-    except (OSError, TapeError, curses.error, RuntimeError, ValueError) as error:
+        return Commander(panels).run()
+    except (OSError, TapeError, RuntimeError, ValueError) as error:
         parser.exit(1, f"TZX Commander: {error}\n")
     except KeyboardInterrupt:
         return 130
-    return 0
 
 
 if __name__ == "__main__":
