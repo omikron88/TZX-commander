@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tzx-commander"
+version = "0.1.0"
+description = "Two-panel terminal manager for ZX Spectrum TAP and TZX images"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSES/GPL-3.0-or-later.txt"]
+dependencies = [
+    "tzxtools==1.9.5",
+    "windows-curses>=2.4; sys_platform == 'win32'",
+]
+
+[project.scripts]
+tzx-commander = "tzx_commander.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["tzx_commander*"]
