@@ -6,8 +6,9 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
-from typing import Awaitable, Callable, Literal
+from typing import Awaitable, Callable, Literal, Mapping
 
 from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.buffer import Buffer
@@ -26,6 +27,7 @@ from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
 from tzxlib.tapfile import TapHeader
 
+from .listing import basic_listing, code_listing
 from .screen import launch_viewer, screen_memory
 from .tape import (
     FORMATS,
@@ -33,7 +35,9 @@ from .tape import (
     TapeError,
     block_text,
     file_stamp,
+    matches_program_data,
     program_indices,
+    program_taps,
     remove_image,
     require_independent,
     save_image,
@@ -53,6 +57,8 @@ HELP = [
     "F1  Nápověda",
     "F2  Otevře zadanou cestu.",
     "F3  Zobrazí detail obrazu nebo bloku a hexadecimální náhled.",
+    "B  Zobrazí listing BASICu.",
+    "A  Zobrazí disassembler Z80 pro blok CODE se známou adresou.",
     "V  Otevře obrazovku ZX Spectrum z panelu nebo detailu bloku.",
     "F4  Uloží binární data aktuálního bloku.",
     "F5  Kopíruje obraz nebo bloky do druhého panelu.",
@@ -64,6 +70,13 @@ HELP = [
     "Ctrl+R  Obnoví obsah obou panelů.",
 ]
 KEYBAR = "F1 Pom F2 Cesta F3 Náhl F4 Exp F5 Kop F6 Přes F7 Nový F8 Smaz F9 Přev F10 Konec"
+
+
+LISTING_VIEWS = {
+    "b": (0, "Listing BASIC", basic_listing),
+    "a": (3, "Disassembler Z80", code_listing),
+}
+ViewerAction = tuple[str, Callable[[], Awaitable[None]]]
 
 
 @dataclass
@@ -178,7 +191,8 @@ class Dialog:
     footer: str
     answer: asyncio.Future[str | None]
     top: int = 0
-    screen_available: bool = False
+    left: int = 0
+    viewer_keys: tuple[str, ...] = ()
 
 
 class Commander:
@@ -196,6 +210,8 @@ class Commander:
             Keys.F7: self.create, Keys.F8: self.remove, Keys.F9: self.convert,
             Keys.Enter: self.open_row, Keys.ControlJ: self.open_row,
             "v": self.preview_screen, "V": self.preview_screen,
+            "b": partial(self.preview_listing, "b"), "B": partial(self.preview_listing, "b"),
+            "a": partial(self.preview_listing, "a"), "A": partial(self.preview_listing, "a"),
         }
 
         self.view = FormattedTextControl(self.draw, focusable=True)
@@ -213,8 +229,8 @@ class Commander:
         bindings = KeyBindings()
         for key in (
             *self.actions, Keys.F10, Keys.Tab, Keys.BackTab, Keys.Backspace,
-            Keys.Up, Keys.Down, Keys.PageUp, Keys.PageDown, Keys.Home, Keys.End,
-            Keys.ControlR, Keys.Insert, " ", "p", "P", "a", "A", "y", "Y", "n", "N",
+            Keys.Up, Keys.Down, Keys.Left, Keys.Right, Keys.PageUp, Keys.PageDown, Keys.Home, Keys.End,
+            Keys.ControlR, Keys.Insert, " ", "p", "P", "y", "Y", "n", "N",
             "1", "2", "3",
         ):
             bindings.add(key, filter=~Condition(self.editing_path))(self.handle_key)
@@ -286,7 +302,7 @@ class Commander:
             page = max(0, height - 3)
             dialog.top = min(dialog.top, max(0, len(dialog.lines) - page))
             lines: list[StyleAndTextTuples] = [[("class:header", fit(" " + dialog.title, width))]]
-            lines.extend([("", " " + fit(line, width - 2))]
+            lines.extend([("", " " + fit(line[dialog.left:], width - 2))]
                          for line in dialog.lines[dialog.top:dialog.top + page])
             if height > 1:
                 lines.extend([] for _ in range(height - len(lines) - 1))
@@ -299,9 +315,9 @@ class Commander:
             right = self.panel_lines(self.panels[1], self.active == 1, width - width // 2, visible)
             row = self.panel.row
             status = self.status or (row.name if row else str(self.panel.location))
-            tab_help = "Tab  Přepnout panel   Mezera  Označit blok   P  Označit pár"
+            tab_help = "Tab Panel  Mezera Označit  P Pár"
             if row is not None and row.index is not None:
-                tab_help += "   V  Obrazovka"
+                tab_help += "  B BASIC  A Z80  V Obrazovka"
             keybar = KEYBAR if width >= len(KEYBAR) else "F1 Pomoc  F2–F9 Akce  F10 Konec"
             lines = [[("class:header", fit(" TZX Commander", width))]]
             lines.extend(a + b for a, b in zip(left, right))
@@ -319,10 +335,10 @@ class Commander:
 
     async def modal(
         self, mode: Literal["viewer", "path", "confirm", "create"], title: str,
-        lines: list[str], footer: str, entry: str = "", *, screen_available: bool = False,
+        lines: list[str], footer: str, entry: str = "", *, viewer_keys: tuple[str, ...] = (),
     ) -> str | None:
         answer = asyncio.get_running_loop().create_future()
-        self.dialog = Dialog(mode, title, lines, footer, answer, screen_available=screen_available)
+        self.dialog = Dialog(mode, title, lines, footer, answer, viewer_keys=viewer_keys)
         if mode == "path":
             self.path_field.buffer.set_document(Document(entry, len(entry)))
             self.app.layout.focus(self.path_field)
@@ -341,16 +357,18 @@ class Commander:
         return True
 
     async def viewer(
-        self, title: str, lines: list[str], *, screen: bytes | None = None
+        self, title: str, lines: list[str], *, actions: Mapping[str, ViewerAction] | None = None
     ) -> None:
-        footer = " ↑/↓  PgUp/PgDn  Home/End  ·  Esc zpět"
-        if screen is not None:
-            footer = " V Obrazovka  ·" + footer
+        actions = actions or {}
+        footer = " Esc zpět  ·  ↑↓←→ PgUp/PgDn Home/End"
+        if actions:
+            shortcuts = "  ·  ".join(f"{key.upper()} {label}" for key, (label, _) in actions.items())
+            footer = f" {shortcuts}  ·{footer}"
         while True:
-            action = await self.modal("viewer", title, lines, footer, screen_available=screen is not None)
-            if action != "v" or screen is None:
+            action = await self.modal("viewer", title, lines, footer, viewer_keys=tuple(actions))
+            if action is None:
                 return
-            await self.show_screen(screen)
+            await actions[action][1]()
 
     async def help(self) -> None:
         await self.viewer("Nápověda", HELP)
@@ -417,10 +435,16 @@ class Commander:
                     lines.append(f"{position:06X}  {hexes:<47}  {printable}")
                 if len(data) > 4096:
                     lines.append("Náhled zobrazuje prvních 4096 B. F4 uloží celý blok.")
-            await self.viewer(
-                f"{self.panel.location.name} / blok {row.index + 1:03}", lines,
-                screen=screen_memory(tape.blocks, row.index),
-            )
+            actions: dict[str, ViewerAction] = {}
+            header, payload = program_taps(tape.blocks, row.index)
+            if header is not None and matches_program_data(header, payload):
+                for key, (type_id, label, _) in LISTING_VIEWS.items():
+                    if header.typeId() == type_id:
+                        actions[key] = (label, partial(self.preview_listing, key))
+            screen = screen_memory(tape.blocks, row.index)
+            if screen is not None:
+                actions["v"] = ("Obrazovka", partial(self.show_screen, screen))
+            await self.viewer(f"{self.panel.location.name} / blok {row.index + 1:03}", lines, actions=actions)
             return
 
         path = self.disk_image()
@@ -432,6 +456,18 @@ class Commander:
         lines.extend(f"{index:03}  {block.id:02X}  {block_text(block) or block.type}"
                      for index, block in enumerate(tape.blocks, 1))
         await self.viewer(path.name, lines)
+
+    async def preview_listing(self, key: str) -> None:
+        tape, row = self.panel.tape, self.panel.row
+        if tape is None or row is None or row.index is None:
+            raise TapeError("Otevřete obraz kazety a vyberte blok.")
+        type_id, label, render = LISTING_VIEWS[key]
+        header, payload = program_taps(tape.blocks, row.index)
+        if (header is None or header.typeId() != type_id
+                or payload is None or not matches_program_data(header, payload)):
+            raise TapeError(f"{label} vyžaduje odpovídající hlavičku a datový blok.")
+        lines = render(header, payload.body())
+        await self.viewer(f"{self.panel.location.name} / blok {row.index + 1:03} / {label}", lines)
 
     async def preview_screen(self) -> None:
         tape, row = self.panel.tape, self.panel.row
@@ -606,8 +642,13 @@ class Commander:
         elif dialog.mode == "viewer":
             if key in (Keys.Enter, Keys.ControlJ, Keys.F3, Keys.F10):
                 dialog.answer.set_result(None)
-            elif dialog.screen_available and key in ("v", "V"):
-                dialog.answer.set_result("v")
+            elif key.lower() in dialog.viewer_keys:
+                dialog.answer.set_result(key.lower())
+            elif key in (Keys.Left, Keys.Right):
+                width = self.app.output.get_size().columns - 2
+                longest = max(map(get_cwidth, dialog.lines), default=0)
+                shift = 8 if key == Keys.Right else -8
+                dialog.left = max(0, min(dialog.left + shift, longest - width))
             else:
                 page = max(1, self.app.output.get_size().rows - 3)
                 shift = scroll_delta(key, page, len(dialog.lines))

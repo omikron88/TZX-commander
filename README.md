@@ -50,6 +50,8 @@ tzx-commander "kazety/hry.tap" "kazety/kompilace.tzx"
 | F1 | Zobrazí nápovědu. |
 | F2 | Otevře cestu zadanou ručně. |
 | F3 | Zobrazí seznam bloků obrazu nebo detail bloku s hexadecimálním náhledem. |
+| B | Zobrazí listing programu ZX Spectrum BASIC. |
+| A | Zobrazí disassembler Z80 pro blok `CODE` se známou adresou. |
 | V | Otevře náhled obrazovky ZX Spectrum z panelu nebo detailu bloku. |
 | F4 | Uloží binární obsah aktuálního bloku. Obrazovku SCREEN$ s odpovídající hlavičkou nabídne jako `.scr`. |
 | F5 | Kopíruje obraz, přidá bloky do otevřeného cílového obrazu nebo je uloží jako nový obraz. |
@@ -65,6 +67,16 @@ hlavičku nebo datový blok programu, stiskněte `P` a potom `F5`. Správce při
 označené bloky v jejich původním pořadí na konec cílového obrazu. Pokud je
 napravo adresář, nabídne uložení do nového souboru. V panelu bez označení se
 kopírování a mazání bloků týká aktuálního řádku.
+
+## Listing BASICu a disassembler Z80
+
+Klávesy `B` a `A` fungují na hlavičce i na odpovídajícím datovém bloku přímo
+v panelu nebo v detailu bloku (`F3`). Listing BASICu zobrazuje příkazy
+s čísly řádků a končí před uloženými proměnnými. Disassembler uvádí hexadecimální
+adresu, bajty a instrukci Z80. Počáteční adresu bere z hlavičky `CODE` (`Bytes`).
+
+Dlouhé řádky lze posouvat šipkami doleva a doprava. Klávesa `Esc` se vrátí
+na předchozí obrazovku správce.
 
 ## Náhled obrazovky ZX Spectrum
 

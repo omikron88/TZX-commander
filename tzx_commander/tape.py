@@ -270,6 +270,28 @@ def block_text(block: TzxbBlock) -> str:
         return ""
 
 
+def _nearby_tap(blocks: Sequence[TzxbBlock], index: int, direction: int) -> TapFile | None:
+    """Look past annotations and pauses that keep playback going."""
+    stop = len(blocks) if direction > 0 else -1
+    for position in range(index + direction, stop, direction):
+        block = blocks[position]
+        if block.id in TAP_METADATA or (block.id == 0x20 and block.length() > 0):
+            continue
+        return getattr(block, "tap", None)
+    return None
+
+
+def program_taps(blocks: Sequence[TzxbBlock], index: int) -> tuple[TapHeader | None, TapFile | None]:
+    """Return the possible header and data associated with the selected block."""
+    tap = getattr(blocks[index], "tap", None)
+    if isinstance(tap, TapHeader):
+        return tap, _nearby_tap(blocks, index, 1)
+    if tap is None:
+        return None, None
+    header = _nearby_tap(blocks, index, -1)
+    return header if isinstance(header, TapHeader) else None, tap
+
+
 def matches_program_data(header: TapFile | None, data: TapFile | None) -> bool:
     return (
         isinstance(header, TapHeader) and data is not None
