@@ -50,6 +50,7 @@ tzx-commander "kazety/hry.tap" "kazety/kompilace.tzx"
 | F1 | Zobrazí nápovědu. |
 | F2 | Otevře cestu zadanou ručně. |
 | F3 | Zobrazí seznam bloků obrazu nebo detail bloku s hexadecimálním náhledem. |
+| V | Otevře náhled obrazovky ZX Spectrum z panelu nebo detailu bloku. |
 | F4 | Uloží binární obsah aktuálního bloku. Obrazovku SCREEN$ s odpovídající hlavičkou nabídne jako `.scr`. |
 | F5 | Kopíruje obraz, přidá bloky do otevřeného cílového obrazu nebo je uloží jako nový obraz. |
 | F6 | Přesune či přejmenuje soubor obrazu. Pro přejmenování ve stejném adresáři lze zadat úplnou cílovou cestu. |
@@ -64,6 +65,19 @@ hlavičku nebo datový blok programu, stiskněte `P` a potom `F5`. Správce při
 označené bloky v jejich původním pořadí na konec cílového obrazu. Pokud je
 napravo adresář, nabídne uložení do nového souboru. V panelu bez označení se
 kopírování a mazání bloků týká aktuálního řádku.
+
+## Náhled obrazovky ZX Spectrum
+
+V otevřeném obrazu kazety vyberte blok a stiskněte `V`. Stejná klávesa funguje
+v detailu bloku (`F3`). Náhled je dostupný na hlavičce `CODE` i na jejím
+odpovídajícím datovém bloku, pokud zápis zasahuje do obrazové paměti
+`0x4000–0x5AFF`. U částečného zápisu se data vykreslí na své adrese
+v prázdné obrazovce. Náhled funguje také pro bezhlavičkový blok s přesně
+6912 bajty dat.
+
+Okno otevírá prohlížeč z adresáře `tools/`, který vyžaduje grafické prostředí
+a Tkinter. Dostupnost Tkinteru lze ověřit příkazem `python -m tkinter`.
+Klávesa `Esc` nebo mezera zavře okno a vrátí vás do správce.
 
 ## Formáty a omezení
 

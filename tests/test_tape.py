@@ -3,6 +3,8 @@
 
 import errno
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -11,6 +13,7 @@ from struct import pack
 from threading import Barrier
 from unittest.mock import patch
 
+from tzx_commander.screen import BITMAP_SIZE, SCREEN_SIZE, launch_viewer, screen_memory
 from tzx_commander.tape import (
     TZX_MAGIC,
     Tape,
@@ -29,6 +32,10 @@ def fragment(flag, body):
     for value in body:
         checksum ^= value
     return pack("<H", len(body) + 2) + bytes([flag]) + body + bytes([checksum])
+
+
+def code_header(address, length, type_id=3):
+    return fragment(0, bytes([type_id]) + b"SCREEN    " + pack("<HHH", length, address, 0))
 
 
 class TapeTests(unittest.TestCase):
@@ -192,6 +199,80 @@ class TapeTests(unittest.TestCase):
         with self.assertRaises(OSError):
             write_file(output, fail)
         self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_full_screen_preview_from_header_and_data(self):
+        path = self.directory / "screen.tap"
+        screen = bytes(range(256)) * 27
+        path.write_bytes(code_header(0x4000, len(screen)) + fragment(255, screen))
+        tape = Tape.open(path)
+        self.assertEqual(screen_memory(tape.blocks, 0), screen)
+        self.assertEqual(screen_memory(tape.blocks, 1), screen)
+
+    def test_headerless_screen_requires_exact_payload_size(self):
+        for size in (SCREEN_SIZE - 1, SCREEN_SIZE, SCREEN_SIZE + 1):
+            with self.subTest(size=size):
+                path = self.directory / "headerless.tap"
+                data = b"\x18" * size
+                path.write_bytes(fragment(255, data))
+                tape = Tape.open(path)
+                self.assertEqual(screen_memory(tape.blocks, 0), data if size == SCREEN_SIZE else None)
+
+    def test_preview_clips_a_load_at_both_screen_boundaries(self):
+        for address, data, first, visible in (
+            (0x3FFE, b"ABCD", 0, b"CD"),
+            (0x5801, b"\x47\x42", BITMAP_SIZE + 1, b"\x47\x42"),
+            (0x5AFE, b"EFGH", SCREEN_SIZE - 2, b"EF"),
+        ):
+            with self.subTest(address=address):
+                path = self.directory / "partial.tap"
+                path.write_bytes(code_header(address, len(data)) + fragment(255, data))
+                tape = Tape.open(path)
+                expected = bytearray(BITMAP_SIZE) + bytearray(b"\x38" * (SCREEN_SIZE - BITMAP_SIZE))
+                expected[first:first + len(visible)] = visible
+                self.assertEqual(screen_memory(tape.blocks, 0), expected)
+
+    def test_known_header_prevents_headerless_detection(self):
+        data = bytes(SCREEN_SIZE)
+        for address, type_id, declared_size in (
+            (0x5B00, 3, SCREEN_SIZE),
+            (0x4000, 0, SCREEN_SIZE),
+            (0x4000, 3, SCREEN_SIZE - 1),
+        ):
+            with self.subTest(address=address, type_id=type_id, length=declared_size):
+                path = self.directory / "not-screen.tap"
+                path.write_bytes(code_header(address, declared_size, type_id) + fragment(255, data))
+                tape = Tape.open(path)
+                self.assertIsNone(screen_memory(tape.blocks, 0))
+                self.assertIsNone(screen_memory(tape.blocks, 1))
+
+    def test_tzx_screen_pair_can_contain_an_annotation_and_pause(self):
+        path = self.directory / "screen.tzx"
+        header = code_header(0x4000, 2)
+        data = fragment(255, b"AB")
+        first = TZX_MAGIC + b"\x01\x14\x10\xe8\x03" + header
+        last = b"\x10\xe8\x03" + data
+        path.write_bytes(first + b"\x30\x03ABC\x20\xe8\x03" + last)
+        tape = Tape.open(path)
+        self.assertEqual(screen_memory(tape.blocks, 0)[:2], b"AB")
+        self.assertEqual(screen_memory(tape.blocks, 3)[:2], b"AB")
+        self.assertIsNone(screen_memory(tape.blocks, 1))
+        path.write_bytes(first + b"\x23\x01\x00" + last)
+        self.assertIsNone(screen_memory(Tape.open(path).blocks, 0))
+
+    def test_viewer_receives_a_temporary_scr_file(self):
+        contents = bytes(SCREEN_SIZE)
+
+        def run(arguments, **kwargs):
+            executable, script, image = arguments
+            self.assertEqual(executable, sys.executable)
+            self.assertEqual(Path(script).name, "scr.py")
+            self.assertEqual(Path(image).read_bytes(), contents)
+            return subprocess.CompletedProcess(arguments, 0)
+
+        with patch("tzx_commander.screen.subprocess.run", side_effect=run) as call:
+            launch_viewer(contents)
+        image = Path(call.call_args.args[0][-1])
+        self.assertFalse(image.exists())
 
 
 if __name__ == "__main__":

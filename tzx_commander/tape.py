@@ -270,6 +270,13 @@ def block_text(block: TzxbBlock) -> str:
         return ""
 
 
+def matches_program_data(header: TapFile | None, data: TapFile | None) -> bool:
+    return (
+        isinstance(header, TapHeader) and data is not None
+        and data.data[:1] == b"\xff" and len(data.data) == header.length() + 2
+    )
+
+
 def program_indices(blocks: Sequence[TzxbBlock], index: int) -> list[int]:
     """Select an adjacent ZX Spectrum header and its matching data block."""
     block = blocks[index]
@@ -278,7 +285,6 @@ def program_indices(blocks: Sequence[TzxbBlock], index: int) -> list[int]:
     if 0 <= start < len(blocks) - 1:
         header = getattr(blocks[start], "tap", None)
         data = getattr(blocks[start + 1], "tap", None)
-        if (isinstance(header, TapHeader) and data is not None
-                and data.data[:1] == b"\xff" and len(data.data) == header.length() + 2):
+        if matches_program_data(header, data):
             return [start, start + 1]
     return [index]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tzx-commander"
-version = "0.1.1"
+version = "0.2.0"
 description = "Two-panel terminal manager for ZX Spectrum TAP and TZX images"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ license-files = ["LICENSES/GPL-3.0-or-later.txt"]
 dependencies = [
     "tzxtools==1.9.5",
     "prompt-toolkit>=3.0.52,<4",
+    "Pillow>=9.1",
 ]
 
 [project.scripts]
@@ -20,3 +21,6 @@ tzx-commander = "tzx_commander.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["tzx_commander*"]
+
+[tool.setuptools.data-files]
+"share/tzx-commander/tools" = ["tools/scr.py", "tools/scr_viewer.py", "LICENSE"]
