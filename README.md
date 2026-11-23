@@ -72,8 +72,9 @@ kopírování a mazání bloků týká aktuálního řádku.
 
 Klávesy `B` a `A` fungují na hlavičce i na odpovídajícím datovém bloku přímo
 v panelu nebo v detailu bloku (`F3`). Listing BASICu zobrazuje příkazy
-s čísly řádků a končí před uloženými proměnnými. Disassembler uvádí hexadecimální
-adresu, bajty a instrukci Z80. Počáteční adresu bere z hlavičky `CODE` (`Bytes`).
+s čísly řádků. Pod programem vypíše uložené číselné a řetězcové proměnné,
+obsah polí a stav smyček `FOR…NEXT`. Disassembler uvádí hexadecimální adresu,
+bajty a instrukci Z80. Počáteční adresu bere z hlavičky `CODE` (`Bytes`).
 
 Dlouhé řádky lze posouvat šipkami doleva a doprava. Klávesa `Esc` se vrátí
 na předchozí obrazovku správce.

@@ -12,6 +12,7 @@ from tzxlib.tapfile import TapHeader
 from tzxlib.z80dis import disassemble
 
 from .tape import TapeError
+from .variables import variable_listing
 
 RELATIVE_ADDRESS_OVERFLOW = re.compile(r"\$(-[0-9A-F]+|[0-9A-F]{5,})")
 
@@ -20,15 +21,16 @@ def basic_listing(header: TapHeader, data: bytes) -> list[str]:
     program_end = header.param2()
     if program_end > len(data):
         raise TapeError("Hlavička BASICu uvádí začátek proměnných za koncem bloku.")
-    if program_end == 0:
-        return ["Program neobsahuje žádné řádky."]
+    if program_end:
+        with BytesIO() as output:
+            convertToBasic(data[:program_end], output)
+            lines = output.getvalue().decode("utf-8").splitlines()
+        if not lines:
+            raise TapeError("Blok neobsahuje čitelné řádky BASICu.")
+    else:
+        lines = ["Program neobsahuje žádné řádky."]
 
-    with BytesIO() as output:
-        convertToBasic(data[:program_end], output)
-        lines = output.getvalue().decode("utf-8").splitlines()
-    if not lines:
-        raise TapeError("Blok neobsahuje čitelné řádky BASICu.")
-    return lines
+    return [*lines, "", "Uložené proměnné", *variable_listing(data[program_end:])]
 
 
 def code_listing(header: TapHeader, data: bytes) -> list[str]:
