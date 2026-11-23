@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Literal
 
-from prompt_toolkit.application import Application
+from prompt_toolkit.application import Application, run_in_terminal
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
@@ -26,6 +26,7 @@ from prompt_toolkit.utils import get_cwidth
 from prompt_toolkit.widgets import TextArea
 from tzxlib.tapfile import TapHeader
 
+from .screen import launch_viewer, screen_memory
 from .tape import (
     FORMATS,
     Tape,
@@ -52,6 +53,7 @@ HELP = [
     "F1  Nápověda",
     "F2  Otevře zadanou cestu.",
     "F3  Zobrazí detail obrazu nebo bloku a hexadecimální náhled.",
+    "V  Otevře obrazovku ZX Spectrum z panelu nebo detailu bloku.",
     "F4  Uloží binární data aktuálního bloku.",
     "F5  Kopíruje obraz nebo bloky do druhého panelu.",
     "F6  Přesune nebo přejmenuje soubor obrazu.",
@@ -176,6 +178,7 @@ class Dialog:
     footer: str
     answer: asyncio.Future[str | None]
     top: int = 0
+    screen_available: bool = False
 
 
 class Commander:
@@ -192,6 +195,7 @@ class Commander:
             Keys.F4: self.extract, Keys.F5: self.copy, Keys.F6: self.move_image,
             Keys.F7: self.create, Keys.F8: self.remove, Keys.F9: self.convert,
             Keys.Enter: self.open_row, Keys.ControlJ: self.open_row,
+            "v": self.preview_screen, "V": self.preview_screen,
         }
 
         self.view = FormattedTextControl(self.draw, focusable=True)
@@ -296,6 +300,8 @@ class Commander:
             row = self.panel.row
             status = self.status or (row.name if row else str(self.panel.location))
             tab_help = "Tab  Přepnout panel   Mezera  Označit blok   P  Označit pár"
+            if row is not None and row.index is not None:
+                tab_help += "   V  Obrazovka"
             keybar = KEYBAR if width >= len(KEYBAR) else "F1 Pomoc  F2–F9 Akce  F10 Konec"
             lines = [[("class:header", fit(" TZX Commander", width))]]
             lines.extend(a + b for a, b in zip(left, right))
@@ -313,10 +319,10 @@ class Commander:
 
     async def modal(
         self, mode: Literal["viewer", "path", "confirm", "create"], title: str,
-        lines: list[str], footer: str, entry: str = "",
+        lines: list[str], footer: str, entry: str = "", *, screen_available: bool = False,
     ) -> str | None:
         answer = asyncio.get_running_loop().create_future()
-        self.dialog = Dialog(mode, title, lines, footer, answer)
+        self.dialog = Dialog(mode, title, lines, footer, answer, screen_available=screen_available)
         if mode == "path":
             self.path_field.buffer.set_document(Document(entry, len(entry)))
             self.app.layout.focus(self.path_field)
@@ -334,8 +340,17 @@ class Commander:
             dialog.answer.set_result(buffer.text if buffer.text.strip() else None)
         return True
 
-    async def viewer(self, title: str, lines: list[str]) -> None:
-        await self.modal("viewer", title, lines, " ↑/↓  PgUp/PgDn  Home/End  ·  Esc zpět")
+    async def viewer(
+        self, title: str, lines: list[str], *, screen: bytes | None = None
+    ) -> None:
+        footer = " ↑/↓  PgUp/PgDn  Home/End  ·  Esc zpět"
+        if screen is not None:
+            footer = " V Obrazovka  ·" + footer
+        while True:
+            action = await self.modal("viewer", title, lines, footer, screen_available=screen is not None)
+            if action != "v" or screen is None:
+                return
+            await self.show_screen(screen)
 
     async def help(self) -> None:
         await self.viewer("Nápověda", HELP)
@@ -402,7 +417,10 @@ class Commander:
                     lines.append(f"{position:06X}  {hexes:<47}  {printable}")
                 if len(data) > 4096:
                     lines.append("Náhled zobrazuje prvních 4096 B. F4 uloží celý blok.")
-            await self.viewer(f"{self.panel.location.name} / blok {row.index + 1:03}", lines)
+            await self.viewer(
+                f"{self.panel.location.name} / blok {row.index + 1:03}", lines,
+                screen=screen_memory(tape.blocks, row.index),
+            )
             return
 
         path = self.disk_image()
@@ -414,6 +432,18 @@ class Commander:
         lines.extend(f"{index:03}  {block.id:02X}  {block_text(block) or block.type}"
                      for index, block in enumerate(tape.blocks, 1))
         await self.viewer(path.name, lines)
+
+    async def preview_screen(self) -> None:
+        tape, row = self.panel.tape, self.panel.row
+        if tape is None or row is None or row.index is None:
+            raise TapeError("Otevřete obraz kazety a vyberte blok.")
+        screen = screen_memory(tape.blocks, row.index)
+        if screen is None:
+            raise TapeError("Ve vybraném bloku nelze rozpoznat obrazovku ZX Spectrum.")
+        await self.show_screen(screen)
+
+    async def show_screen(self, screen: bytes) -> None:
+        await run_in_terminal(lambda: launch_viewer(screen), in_executor=True)
 
     def mark(self, pair: bool) -> None:
         row = self.panel.row
@@ -576,6 +606,8 @@ class Commander:
         elif dialog.mode == "viewer":
             if key in (Keys.Enter, Keys.ControlJ, Keys.F3, Keys.F10):
                 dialog.answer.set_result(None)
+            elif dialog.screen_available and key in ("v", "V"):
+                dialog.answer.set_result("v")
             else:
                 page = max(1, self.app.output.get_size().rows - 3)
                 shift = scroll_delta(key, page, len(dialog.lines))
