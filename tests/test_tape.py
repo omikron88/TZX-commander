@@ -203,10 +203,12 @@ class TapeTests(unittest.TestCase):
     def test_full_screen_preview_from_header_and_data(self):
         path = self.directory / "screen.tap"
         screen = bytes(range(256)) * 27
-        path.write_bytes(code_header(0x4000, len(screen)) + fragment(255, screen))
-        tape = Tape.open(path)
-        self.assertEqual(screen_memory(tape.blocks, 0), screen)
-        self.assertEqual(screen_memory(tape.blocks, 1), screen)
+        for address in (0x4000, 0x8000):
+            with self.subTest(address=address):
+                path.write_bytes(code_header(address, len(screen)) + fragment(255, screen))
+                tape = Tape.open(path)
+                self.assertEqual(screen_memory(tape.blocks, 0), screen)
+                self.assertEqual(screen_memory(tape.blocks, 1), screen)
 
     def test_headerless_screen_requires_exact_payload_size(self):
         for size in (SCREEN_SIZE - 1, SCREEN_SIZE, SCREEN_SIZE + 1):
@@ -231,10 +233,19 @@ class TapeTests(unittest.TestCase):
                 expected[first:first + len(visible)] = visible
                 self.assertEqual(screen_memory(tape.blocks, 0), expected)
 
+    def test_offscreen_code_preview_requires_exact_payload_size(self):
+        path = self.directory / "offscreen.tap"
+        for size in (SCREEN_SIZE - 1, SCREEN_SIZE + 1):
+            with self.subTest(size=size):
+                data = bytes(size)
+                path.write_bytes(code_header(0x8000, size) + fragment(255, data))
+                tape = Tape.open(path)
+                self.assertIsNone(screen_memory(tape.blocks, 0))
+                self.assertIsNone(screen_memory(tape.blocks, 1))
+
     def test_known_header_prevents_headerless_detection(self):
         data = bytes(SCREEN_SIZE)
         for address, type_id, declared_size in (
-            (0x5B00, 3, SCREEN_SIZE),
             (0x4000, 0, SCREEN_SIZE),
             (0x4000, 3, SCREEN_SIZE - 1),
         ):
