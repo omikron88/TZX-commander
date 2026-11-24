@@ -25,6 +25,7 @@ from tzx_commander.tape import (
     save_image,
     tap_losses,
     transfer_image,
+    unpaired_flag,
     write_file,
 )
 from tzx_commander.variables import variable_listing
@@ -122,6 +123,41 @@ class TapeTests(unittest.TestCase):
         reduced = Tape.open(intermediate)
         self.assertEqual(reduced.version, (1, 13))
         self.assertEqual([block.dump() for block in reduced.blocks], [b"test"])
+
+    def test_unpaired_flags_preserve_the_original_byte(self):
+        path = self.directory / "flags.tap"
+        paired_data = fragment(255, b"pair")
+        path.write_bytes(
+            fragment(255, b"headless")
+            + code_header(0x8000, 4)
+            + paired_data[:-1] + bytes([paired_data[-1] ^ 1])
+            + code_header(0x8000, 3)
+            + fragment(0xA7, b"odd")
+            + fragment(0, b"short")
+        )
+        tape = Tape.open(path)
+        self.assertEqual(
+            [unpaired_flag(tape.blocks, index) for index in range(len(tape.blocks))],
+            [0xFF, None, None, 0, 0xA7, 0],
+        )
+        self.assertFalse(tape.blocks[2].tap.valid())
+
+    def test_unpaired_flags_respect_tzx_pairing_and_length(self):
+        path = self.directory / "flags.tzx"
+        standard = b"\x10\xe8\x03"
+        path.write_bytes(
+            TZX_MAGIC + b"\x01\x14"
+            + standard + code_header(0x8000, 4)
+            + b"\x30\x03ABC\x20\xe8\x03"
+            + standard + fragment(255, b"pair")
+            + standard + code_header(0x8000, 5)
+            + standard + fragment(255, b"four")
+        )
+        tape = Tape.open(path)
+        self.assertEqual(
+            [unpaired_flag(tape.blocks, index) for index in range(len(tape.blocks))],
+            [None, None, None, None, 0, 0xFF],
+        )
 
     def test_matching_header_can_select_whole_program(self):
         path = self.directory / "program.tap"

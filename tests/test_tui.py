@@ -55,6 +55,9 @@ class CommanderTests(unittest.IsolatedAsyncioTestCase):
                 await send("\x15" + tape_path.name + "\r", lambda: panels[1].tape is not None)
                 self.assertEqual(panels[1].location, tape_path)
                 self.assertEqual(panels[0].location, root)
+                rows = commander.panel_lines(panels[1], active=True, width=28, visible=4)
+                self.assertIn("ID Flag", rows[1][1][1])
+                self.assertTrue(rows[3][1][1].endswith("10 FF  "))
 
                 await send("\x1bOQ", commander.editing_path)
                 await send("\x1b", lambda: commander.dialog is None)
@@ -62,6 +65,7 @@ class CommanderTests(unittest.IsolatedAsyncioTestCase):
                 with patch.object(commander, "show_screen") as show_screen:
                     await send("\x1bOR", lambda: commander.dialog is not None)  # F3
                     self.assertIn("v", commander.dialog.viewer_keys)
+                    self.assertIn("Flag byte $FF", commander.dialog.lines)
                     await send("v", lambda: show_screen.await_count == 1 and commander.dialog is not None)
                     show_screen.assert_awaited_once_with(screen)
                     await send("\x1b", lambda: commander.dialog is None)

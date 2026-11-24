@@ -299,6 +299,15 @@ def matches_program_data(header: TapFile | None, data: TapFile | None) -> bool:
     )
 
 
+def unpaired_flag(blocks: Sequence[TzxbBlock], index: int) -> int | None:
+    """Return the stored flag byte when the block has no matching partner."""
+    tap = getattr(blocks[index], "tap", None)
+    if tap is None or not tap.data:
+        return None
+    header, data = program_taps(blocks, index)
+    return None if matches_program_data(header, data) else tap.data[0]
+
+
 def program_indices(blocks: Sequence[TzxbBlock], index: int) -> list[int]:
     """Select an adjacent ZX Spectrum header and its matching data block."""
     block = blocks[index]
