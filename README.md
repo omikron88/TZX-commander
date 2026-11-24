@@ -94,6 +94,12 @@ v prázdné obrazovce. U bloku `CODE` mimo obrazovou paměť (například na
 adrese `0x8000`) nebo u bezhlavičkového bloku se přesně 6912 bajtů dat
 zobrazí jako celá obrazovka.
 
+Klávesa `V` umí zobrazit i komprimovaný úvodní obrázek z uložené řetězcové
+proměnné `a$` programu BASIC. Správce hledá přímo v řetězci signaturu
+`01 56 00 CD 52 00 3B 3B E1 09 11 00 40 4E 23 7E B9`. Rozpoznanou rutinu
+emuluje v oddělené paměti Z80 a náhled otevře po návratu z volání, když
+rutina zapsala celých 6912 bajtů obrazovky.
+
 Okno otevírá prohlížeč z adresáře `tools/`, který vyžaduje grafické prostředí
 a Tkinter. Dostupnost Tkinteru lze ověřit příkazem `python -m tkinter`.
 Klávesa `Esc` nebo mezera zavře okno a vrátí vás do správce.

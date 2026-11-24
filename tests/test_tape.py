@@ -14,7 +14,17 @@ from threading import Barrier
 from unittest.mock import patch
 
 from tzx_commander.listing import NUMBER_STYLE, basic_listing, code_listing
-from tzx_commander.screen import BITMAP_SIZE, SCREEN_SIZE, launch_viewer, screen_memory
+from tzx_commander.screen import (
+    BITMAP_SIZE,
+    PACKED_DATA_OFFSET,
+    PACKED_SCREEN_MAGIC,
+    SCREEN_SIZE,
+    PackedScreen,
+    launch_viewer,
+    screen_memory,
+    screen_preview,
+    unpack_basic_screen,
+)
 from tzx_commander.tape import (
     TZX_MAGIC,
     Tape,
@@ -446,6 +456,46 @@ class TapeTests(unittest.TestCase):
         self.assertTrue(listing[0].endswith("jr $0000"))
         self.assertTrue(listing[1].endswith("jr $FFFE"))
         self.assertTrue(listing[2].endswith("db $3E"))
+
+    def test_packed_basic_screen_finds_a_saved_string_after_other_variables(self):
+        path = self.directory / "packed.tap"
+        # The prologue obtains the first byte, then this fixture fills the full screen with it.
+        code = PACKED_SCREEN_MAGIC + bytes.fromhex("12 21 00 40 13 01 FF 1A ED B0 C9")
+        string = b"wrapper" + code.ljust(PACKED_DATA_OFFSET, b"\x00") + b"\x00\xA5"
+        line = b'\xF5"DEMO"\x0D'
+        basic = pack(">H", 10) + pack("<H", len(line)) + line
+        program = basic + b"\x62" + basic_integer(7) + b"\x41" + pack("<H", len(string)) + string
+        header = b"\x00BASIC     " + pack("<HHH", len(program), 10, len(basic))
+        path.write_bytes(fragment(0, header) + fragment(255, program))
+        tape = Tape.open(path)
+
+        screen = screen_preview(tape.blocks, 0)
+        self.assertIsInstance(screen, PackedScreen)
+        self.assertEqual(screen, screen_preview(tape.blocks, 1))
+        self.assertEqual(screen.entry_offset, len(basic) + 6 + 3 + len(b"wrapper"))
+        self.assertEqual(unpack_basic_screen(screen), b"\xA5" * SCREEN_SIZE)
+
+    def test_packed_basic_detection_ignores_other_strings_and_ambiguous_signatures(self):
+        path = self.directory / "not-packed.tap"
+        padded = PACKED_SCREEN_MAGIC.ljust(PACKED_DATA_OFFSET + 2, b"\x00")
+        for tag, value in ((0x42, padded), (0x41, b"greeting"), (0x41, padded * 2)):
+            with self.subTest(tag=tag, size=len(value)):
+                program = bytes([tag]) + pack("<H", len(value)) + value
+                header = b"\x00BASIC     " + pack("<HHH", len(program), 10, 0)
+                path.write_bytes(fragment(0, header) + fragment(255, program))
+                tape = Tape.open(path)
+                self.assertIsNone(screen_preview(tape.blocks, 0))
+
+    def test_packed_screen_runner_checks_return_memory_io_and_instruction_limit(self):
+        for instructions, error in (
+            (b"\xC9", "celou obrazovkou"),
+            (b"\xCD\x53\x00", "Instrukce mimo dekompresor"),
+            (b"\xD3\xFE", "výstupní port"),
+            (b"\x18\xFE", "limit instrukcí"),
+        ):
+            with self.subTest(instructions=instructions.hex()):
+                with self.assertRaisesRegex(TapeError, error):
+                    unpack_basic_screen(PackedScreen(instructions, 0, len(instructions)))
 
     def test_viewer_receives_a_temporary_scr_file(self):
         contents = bytes(SCREEN_SIZE)
