@@ -270,7 +270,7 @@ class Commander:
             layout=layout, key_bindings=bindings, full_screen=True, erase_when_done=True,
             style=Style.from_dict({
                 "body": "ansiwhite bg:ansiblue",
-                "header": "ansiblue bg:ansicyan bold",
+                "header": "ansiwhite bg:ansicyan bold",
                 "selection": "ansiblue bg:ansicyan",
                 "mark": "ansiyellow bg:ansiblue bold",
                 "basic-number": "ansibrightcyan bg:ansiblue bold",
