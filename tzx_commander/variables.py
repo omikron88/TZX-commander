@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from io import BytesIO
 from itertools import product
 from math import ldexp, prod
@@ -76,13 +77,12 @@ def _subscript(indices: tuple[int, ...]) -> str:
     return "(" + ",".join(map(str, indices)) + ")" if indices else ""
 
 
-def _array_rows(stream: BytesIO, name: str, is_string: bool) -> Iterator[str]:
-    record_length = _word(stream)
-    array = BytesIO(_read(stream, record_length))
+def _array_rows(data: bytes, name: str, is_string: bool) -> Iterator[str]:
+    array = BytesIO(data)
     dimension_count = _read(array, 1)[0]
     dimensions = tuple(_word(array) for _ in range(dimension_count))
     element_size = 1 if is_string else 5
-    if not dimensions or 0 in dimensions or array.tell() + prod(dimensions) * element_size != record_length:
+    if not dimensions or 0 in dimensions or array.tell() + prod(dimensions) * element_size != len(data):
         raise ValueError("rozměry pole neodpovídají délce dat")
 
     yield f"DIM {name}{_subscript(dimensions)}"
@@ -92,42 +92,83 @@ def _array_rows(stream: BytesIO, name: str, is_string: bool) -> Iterator[str]:
         yield f"  {name}{_subscript(indices)} = {value}"
 
 
-def _variable_rows(stream: BytesIO, tag: int) -> Iterator[str]:
-    kind, letter = tag & 0xE0, tag & 0x1F
+@dataclass(frozen=True)
+class VariableRecord:
+    kind: int
+    name: str
+    offset: int
+    data: bytes
+
+
+def _read_variable(stream: BytesIO) -> VariableRecord | None:
+    tag = stream.read(1)
+    if not tag:
+        return None
+    if tag == END_MARKER:
+        if stream.read(1):
+            raise ValueError("data za koncovou značkou")
+        return None
+
+    kind, letter = tag[0] & 0xE0, tag[0] & 0x1F
     if not 1 <= letter <= 26:
         raise ValueError("neplatný název proměnné")
     name = chr(ord("a") + letter - 1)
+    if kind == LONG_NUMBER:
+        name = _long_name(stream, name)
 
-    if kind == STRING:
-        yield f"{name}$ = {_string(_read(stream, _word(stream)))}"
-    elif kind == NUMBER:
-        yield f"{name} = {_number(stream)}"
-    elif kind == NUMBER_ARRAY:
-        yield from _array_rows(stream, name, is_string=False)
-    elif kind == LONG_NUMBER:
-        yield f"{_long_name(stream, name)} = {_number(stream)}"
-    elif kind == CHARACTER_ARRAY:
-        yield from _array_rows(stream, name + "$", is_string=True)
+    if kind in (STRING, NUMBER_ARRAY, CHARACTER_ARRAY):
+        length = _word(stream)
+    elif kind in (NUMBER, LONG_NUMBER):
+        length = 5
     elif kind == FOR_COUNTER:
-        value, limit, step = (_number(stream) for _ in range(3))
-        line = _word(stream)
-        statement = _read(stream, 1)[0]
-        yield f"{name} = {value}  (FOR, mez {limit}, krok {step}, řádek {line}, příkaz {statement})"
+        length = 18
     else:
         raise ValueError(f"neznámý typ ${kind:02X}")
+
+    offset = stream.tell()
+    return VariableRecord(kind, name, offset, _read(stream, length))
+
+
+def find_saved_string(data: bytes, name: str) -> tuple[int, bytes] | None:
+    """Return a scalar string's payload and its byte offset in the variable area."""
+    with BytesIO(data) as stream:
+        try:
+            while (record := _read_variable(stream)) is not None:
+                if record.kind == STRING and record.name == name:
+                    return record.offset, record.data
+        except ValueError:
+            return None
+    return None
+
+
+def _variable_rows(record: VariableRecord) -> Iterator[str]:
+    name, kind, data = record.name, record.kind, record.data
+    if kind == STRING:
+        yield f"{name}$ = {_string(data)}"
+    elif kind in (NUMBER, LONG_NUMBER):
+        yield f"{name} = {format_number(data)}"
+    elif kind == NUMBER_ARRAY:
+        yield from _array_rows(data, name, is_string=False)
+    elif kind == CHARACTER_ARRAY:
+        yield from _array_rows(data, name + "$", is_string=True)
+    elif kind == FOR_COUNTER:
+        with BytesIO(data) as stream:
+            value, limit, step = (_number(stream) for _ in range(3))
+            line = _word(stream)
+            statement = _read(stream, 1)[0]
+        yield f"{name} = {value}  (FOR, mez {limit}, krok {step}, řádek {line}, příkaz {statement})"
 
 
 def variable_listing(data: bytes) -> list[str]:
     lines = []
     with BytesIO(data) as stream:
-        while tag := stream.read(1):
-            offset = stream.tell() - 1
+        while True:
+            offset = stream.tell()
             try:
-                if tag == END_MARKER:
-                    if offset + 1 != len(data):
-                        raise ValueError("data za koncovou značkou")
+                record = _read_variable(stream)
+                if record is None:
                     break
-                lines.extend(_variable_rows(stream, tag[0]))
+                lines.extend(_variable_rows(record))
             except ValueError as error:
                 lines.append(f"Poškozená oblast proměnných na pozici ${offset:04X} ({error}).")
                 break

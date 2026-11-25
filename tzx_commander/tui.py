@@ -29,7 +29,7 @@ from prompt_toolkit.widgets import TextArea
 from tzxlib.tapfile import TapHeader
 
 from .listing import ListingLine, basic_listing, code_listing
-from .screen import launch_viewer, screen_memory
+from .screen import PackedScreen, launch_viewer, screen_preview
 from .tape import (
     FORMATS,
     Tape,
@@ -476,9 +476,10 @@ class Commander:
                 for key, (type_id, label, _) in LISTING_VIEWS.items():
                     if header.typeId() == type_id:
                         actions[key] = (label, partial(self.preview_listing, key))
-            screen = screen_memory(tape.blocks, row.index)
+            screen = screen_preview(tape.blocks, row.index)
             if screen is not None:
-                actions["v"] = ("Obrazovka", partial(self.show_screen, screen))
+                label = "Obrazovka z a$" if isinstance(screen, PackedScreen) else "Obrazovka"
+                actions["v"] = (label, partial(self.show_screen, screen))
             await self.viewer(f"{self.panel.location.name} / blok {row.index + 1:03}", lines, actions=actions)
             return
 
@@ -510,12 +511,12 @@ class Commander:
         tape, row = self.panel.tape, self.panel.row
         if tape is None or row is None or row.index is None:
             raise TapeError("Otevřete obraz kazety a vyberte blok.")
-        screen = screen_memory(tape.blocks, row.index)
+        screen = screen_preview(tape.blocks, row.index)
         if screen is None:
             raise TapeError("Ve vybraném bloku nelze rozpoznat obrazovku ZX Spectrum.")
         await self.show_screen(screen)
 
-    async def show_screen(self, screen: bytes) -> None:
+    async def show_screen(self, screen: bytes | PackedScreen) -> None:
         await run_in_terminal(lambda: launch_viewer(screen), in_executor=True)
 
     def mark(self, pair: bool) -> None:

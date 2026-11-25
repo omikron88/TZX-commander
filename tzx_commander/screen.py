@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -13,10 +14,21 @@ from typing import Sequence
 from tzxlib.tzxblocks import TzxbBlock
 
 from .tape import TapeError, matches_program_data, program_taps
+from .variables import find_saved_string
 
 SCREEN_ADDRESS = 0x4000
 BITMAP_SIZE = 6144
 SCREEN_SIZE = BITMAP_SIZE + 768
+# Position-independent prologue through LD DE,$4000 and the first input comparison.
+PACKED_SCREEN_MAGIC = bytes.fromhex("01 56 00 CD 52 00 3B 3B E1 09 11 00 40 4E 23 7E B9")
+PACKED_DATA_OFFSET = 92
+
+
+@dataclass(frozen=True)
+class PackedScreen:
+    program: bytes
+    entry_offset: int
+    string_end: int
 
 
 def screen_memory(blocks: Sequence[TzxbBlock], index: int) -> bytes | None:
@@ -40,9 +52,36 @@ def screen_memory(blocks: Sequence[TzxbBlock], index: int) -> bytes | None:
     return bytes(image)
 
 
-def viewer_script() -> Path:
+def _packed_screen(blocks: Sequence[TzxbBlock], index: int) -> PackedScreen | None:
+    header, data = program_taps(blocks, index)
+    if header is None or header.typeId() != 0 or data is None or not matches_program_data(header, data):
+        return None
+
+    program = data.body()
+    variables_start = header.param2()
+    if variables_start > len(program):
+        return None
+    saved = find_saved_string(program[variables_start:], "a")
+    if saved is None:
+        return None
+    string_offset, string = saved
+    position = string.find(PACKED_SCREEN_MAGIC)
+    if position < 0 or position + PACKED_DATA_OFFSET + 2 > len(string):
+        return None
+    if string.find(PACKED_SCREEN_MAGIC, position + 1) >= 0:
+        return None
+
+    start = variables_start + string_offset
+    return PackedScreen(program, start + position, start + len(string))
+
+
+def screen_preview(blocks: Sequence[TzxbBlock], index: int) -> bytes | PackedScreen | None:
+    return screen_memory(blocks, index) or _packed_screen(blocks, index)
+
+
+def _tool_script(name: str, description: str) -> Path:
     root = Path(__file__).resolve().parents[1]
-    source = root / "tools" / "scr.py"
+    source = root / "tools" / name
     if (root / "pyproject.toml").is_file() and source.is_file():
         return source
 
@@ -52,15 +91,38 @@ def viewer_script() -> Path:
         package = None
     if package is not None:
         for path in package.files or ():
-            if path.parts[-4:] == ("share", "tzx-commander", "tools", "scr.py"):
+            if path.parts[-4:] == ("share", "tzx-commander", "tools", name):
                 script = Path(package.locate_file(path)).resolve()
                 if script.is_file():
                     return script
 
-    raise TapeError("Chybí prohlížeč SCR. Přeinstalujte TZX Commander.")
+    raise TapeError(f"Chybí {description}. Přeinstalujte TZX Commander.")
 
 
-def launch_viewer(screen: bytes) -> None:
+def viewer_script() -> Path:
+    return _tool_script("scr.py", "prohlížeč SCR")
+
+
+def unpack_basic_screen(screen: PackedScreen) -> bytes:
+    script = _tool_script("unpack_screen.py", "dekompresor obrazovky")
+    try:
+        process = subprocess.run(
+            [sys.executable, str(script), str(screen.entry_offset), str(screen.string_end)],
+            input=screen.program, capture_output=True, timeout=5, check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise TapeError("Vypršel čas pro rozbalení obrazovky.") from error
+    if process.returncode:
+        detail = process.stderr.decode("utf-8", errors="replace").strip()
+        raise TapeError(f"Rozbalení obrazovky selhalo. {detail}".rstrip())
+    if len(process.stdout) != SCREEN_SIZE:
+        raise TapeError("Dekompresor nevrátil 6912 bajtů obrazovky.")
+    return process.stdout
+
+
+def launch_viewer(screen: bytes | PackedScreen) -> None:
+    if isinstance(screen, PackedScreen):
+        screen = unpack_basic_screen(screen)
     script = viewer_script()
     with TemporaryDirectory(prefix="tzx-commander-") as directory:
         path = Path(directory) / "preview.scr"
