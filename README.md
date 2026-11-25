@@ -68,6 +68,11 @@ označené bloky v jejich původním pořadí na konec cílového obrazu. Pokud 
 napravo adresář, nabídne uložení do nového souboru. V panelu bez označení se
 kopírování a mazání bloků týká aktuálního řádku.
 
+Sloupec `Flag` v otevřeném obrazu ukazuje příznakový bajt v hexadecimálním
+tvaru u dat bez odpovídající hlavičky i u samotné hlavičky bez dat. Údaj je
+také v detailu `F3`. U spárovaných bloků a bloků bez příznakového bajtu
+zůstává sloupec prázdný.
+
 ## Listing BASICu a disassembler Z80
 
 Klávesy `B` a `A` fungují na hlavičce i na odpovídajícím datovém bloku přímo

@@ -46,6 +46,7 @@ from .tape import (
     tape_format,
     transfer_image,
     unchanged,
+    unpaired_flag,
     write_file,
 )
 
@@ -86,6 +87,7 @@ class Row:
     detail: str = ""
     path: Path | None = None
     index: int | None = None
+    flag: int | None = None
 
 
 @dataclass
@@ -119,7 +121,10 @@ class Panel:
             rows.append(Row("..", "zavřít", path.parent))
             for index, block in enumerate(tape.blocks):
                 title = block_text(block) or block.type
-                rows.append(Row(f"{index + 1:03}  {title}", f"{block.id:02X}", index=index))
+                rows.append(Row(
+                    f"{index + 1:03}  {title}", f"{block.id:02X}",
+                    index=index, flag=unpaired_flag(tape.blocks, index),
+                ))
         cursor = 1 if tape is not None and tape.blocks else 0
         if selection is not None:
             for position, row in enumerate(rows):
@@ -292,9 +297,9 @@ class Commander:
         rows: list[StyleAndTextTuples] = [
             [("", "┌"), (title_style, label), ("", "─" * (inner - get_cwidth(label)) + "┐")],
         ]
-        detail_width = 6 if panel.tape is not None else 13
+        detail_width = 7 if panel.tape is not None else 13
         name_width = inner - detail_width - 2
-        name, detail = ("Blok / typ", "ID") if panel.tape is not None else ("Název", "Velikost")
+        name, detail = ("Blok / typ", "ID Flag") if panel.tape is not None else ("Název", "Velikost")
         headings = f" {fit(name, name_width)} {fit(detail, detail_width)}"
         rows.append([("", "│"), ("class:mark", headings), ("", "│")])
 
@@ -307,7 +312,8 @@ class Commander:
             marked = row.index in panel.marked
             selected = active and position == panel.cursor
             style = "class:selection" if selected else "class:mark" if marked else ""
-            line = ("*" if marked else " ") + fit(row.name, name_width) + " " + fit(row.detail, detail_width)
+            detail = row.detail if row.flag is None else f"{row.detail} {row.flag:02X}"
+            line = ("*" if marked else " ") + fit(row.name, name_width) + " " + fit(detail, detail_width)
             rows.append([("", "│"), (style, line), ("", "│")])
 
         if panel.tape is None:
@@ -450,7 +456,10 @@ class Commander:
         row = self.panel.row
         if tape is not None and row is not None and row.index is not None:
             block = tape.blocks[row.index]
-            lines = [f"ID {block.id:02X}  {block.type}", *block_text(block).splitlines()]
+            lines = [f"ID {block.id:02X}  {block.type}"]
+            if row.flag is not None:
+                lines.append(f"Flag byte ${row.flag:02X}")
+            lines.extend(block_text(block).splitlines())
             data = block.dump()
             if data is not None:
                 lines.extend(["", f"{len(data):,} B dat"])
@@ -479,8 +488,10 @@ class Commander:
         if fmt == "TZX":
             fmt += f" {tape.version[0]}.{tape.version[1]:02}"
         lines = [f"{fmt}  /  {len(tape.blocks)} bloků", ""]
-        lines.extend(f"{index:03}  {block.id:02X}  {block_text(block) or block.type}"
-                     for index, block in enumerate(tape.blocks, 1))
+        for index, block in enumerate(tape.blocks):
+            flag = unpaired_flag(tape.blocks, index)
+            flag_text = f"  Flag ${flag:02X}" if flag is not None else ""
+            lines.append(f"{index + 1:03}  {block.id:02X}{flag_text}  {block_text(block) or block.type}")
         await self.viewer(path.name, lines)
 
     async def preview_listing(self, key: str) -> None:
